@@ -42,7 +42,6 @@ void register_subscriber(int id, int msg_category, int queue_id) {
     printf("Subscriber %d added for category %d with queue ID %d\n", id, msg_category, queue_id);
 }
 
-// Remove a subscriber from the list
 void unregister_subscriber(int id, int msg_category) {
     struct subscriber **current = &subscriber_list;
     while (*current) {
