@@ -11,7 +11,7 @@
 #define ACTION_ACK 300
 #define ACTION_NACK 400
 
-// Structure for message queue
+// Struktura wiadomości
 struct msg_packet {
     long type;
     char body[MSG_BUFFER_SIZE];
@@ -30,19 +30,19 @@ int main(int argc, char *argv[]) {
     int producer_id = atoi(argv[2]);
     int message_category = atoi(argv[3]);
 
-    // Generate a unique IPC key for the producer-dispatcher queue
+    // Generowanie klucza IPC
     if ((ipc_key = ftok(argv[1], 42)) == -1) {
         perror("Error generating IPC key");
         exit(EXIT_FAILURE);
     }
 
-    // Connect to the producer-dispatcher message queue
+    // Połączenie z kolejką dyspozytora
     if ((dispatcher_queue_id = msgget(ipc_key, 0666)) == -1) {
         perror("Error connecting to dispatcher queue");
         exit(EXIT_FAILURE);
     }
 
-    // Register producer
+    // Rejestracja producenta
     struct msg_packet registration_packet;
     registration_packet.type = TYPE_PRODUCER;
     registration_packet.sender_id = producer_id;
@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    // Wait for acknowledgment
+    // Oczekiwanie na potwierdzenie
     struct msg_packet response_packet;
     if (msgrcv(dispatcher_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
         perror("Error receiving acknowledgment");
@@ -70,7 +70,7 @@ int main(int argc, char *argv[]) {
 
     printf("Producer %d registered successfully for category %d.\n", producer_id, message_category);
 
-    // Send notifications in a loop
+    // Wysyłanie powiadomień
     struct msg_packet notification_packet;
     notification_packet.type = ACTION_NOTIFY;
     notification_packet.sender_id = producer_id;
@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        // Remove newline character
+        // Usunięcie znaku nowej linii
         notification_packet.body[strcspn(notification_packet.body, "\n")] = '\0';
 
         if (strcmp(notification_packet.body, "exit") == 0) {
@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        // Send notification to dispatcher
+        // Wysłanie powiadomienia do dyspozytora
         if (msgsnd(dispatcher_queue_id, &notification_packet, sizeof(notification_packet) - sizeof(long), 0) == -1) {
             perror("Error sending notification");
         } else {

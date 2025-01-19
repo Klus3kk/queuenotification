@@ -129,6 +129,8 @@ void distribute_notification(int msg_category, const char *message) {
     }
 }
 
+
+
 // Generowanie listy producentów
 void generate_producer_list(char *buffer) {
     struct producer *current = producer_list;
@@ -194,19 +196,24 @@ int main(int argc, char *argv[]) {
         switch (packet.type) {
             case TYPE_PRODUCER:
                 printf("Producer registered: ID %d, Category %d\n", packet.sender_id, packet.msg_category);
-                if (category_exists(packet.msg_category)) { // Sprawdź, czy kategoria istnieje
+
+                // Sprawdzenie, czy kategoria już istnieje
+                if (category_exists(packet.msg_category)) {
                     response.type = ACTION_NACK;
                     snprintf(response.body, MSG_BUFFER_SIZE, "Category %d already exists.", packet.msg_category);
                 } else {
                     register_producer(packet.sender_id, packet.msg_category);
                     response.type = ACTION_ACK;
-                    snprintf(response.body, MSG_BUFFER_SIZE, "Category %d registered.", packet.msg_category);
-                    notify_clients_about_new_category(packet.msg_category); // Powiadom klientów
+                    snprintf(response.body, MSG_BUFFER_SIZE, "Producer registered successfully.");
                 }
-                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+
+                // Wysłanie odpowiedzi do producenta
+                if (msgsnd(dispatcher_queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
                     perror("Error sending producer acknowledgment");
                 }
                 break;
+
+
 
 
             case TYPE_CONSUMER:
@@ -215,26 +222,22 @@ int main(int argc, char *argv[]) {
                 break;
 
             case ACTION_SUBSCRIBE_LIST:
-                printf("Konsument %d zażądał listy powiadomień.\n", packet.sender_id);
-
-                // Sprawdź, czy lista producentów jest pusta
+                printf("Consumer %d requested list of available notifications.\n", packet.sender_id);
                 if (producer_list == NULL) {
-                    printf("Brak dostępnych powiadomień dla konsumenta %d.\n", packet.sender_id);
+                    printf("No available notifications for consumer %d.\n", packet.sender_id);
                     response.type = ACTION_NACK;
-                    snprintf(response.body, MSG_BUFFER_SIZE, "Brak dostępnych powiadomień.");
+                    snprintf(response.body, MSG_BUFFER_SIZE, "No available notifications.");
                 } else {
-                    // Generowanie listy producentów
                     memset(response.body, 0, MSG_BUFFER_SIZE);
                     generate_producer_list(response.body);
                     response.type = ACTION_SUBSCRIBE_LIST;
                 }
-
-                response.queue_id = packet.queue_id;
-
+                response.queue_id = packet.queue_id; // Ustawienie queue_id
                 if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
-                    perror("Błąd wysyłania listy powiadomień do klienta");
+                    perror("Error sending subscription list to client");
                 }
                 break;
+
 
 
             case ACTION_SUBSCRIBE:
@@ -246,14 +249,15 @@ int main(int argc, char *argv[]) {
                 }
                 break;
             case ACTION_NOTIFY:
-                printf("Notification received from producer %d for category %d: %s\n", 
+                printf("Notification received from producer %d for category %d: %s\n",
                     packet.sender_id, packet.msg_category, packet.body);
-                distribute_notification(packet.msg_category, packet.body);
+                distribute_notification(packet.msg_category, packet.body); // Implementuj funkcję
                 response.type = ACTION_ACK;
                 if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
                     perror("Error sending acknowledgment for notification");
                 }
                 break;
+
 
             default:
                 printf("Nieznany typ wiadomości: %ld\n", packet.type);
