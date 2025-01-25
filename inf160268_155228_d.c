@@ -11,7 +11,9 @@
 #define ACTION_ACK 300
 #define ACTION_NACK 400
 #define ACTION_SUBSCRIBE 500
+#define ACTION_UNSUBSCRIBE 555
 #define ACTION_SUBSCRIBE_LIST 550
+#define ACTION_UNSUBSCRIBE_LIST 505
 #define ACTION_NOTIFY 600
 
 struct msg_packet {
@@ -26,6 +28,12 @@ struct producer {
     int id;
     int msg_category;
     struct producer *next;
+};
+
+struct subscribtion {
+    int producer_id;
+    int msg_category;
+    struct subscribtion *next;
 };
 
 struct subscriber {
@@ -43,8 +51,10 @@ struct subscriber *subscriber_list = NULL;
 void register_producer(int id, int msg_category);
 void register_subscriber(int id, int msg_category, int queue_id);
 void generate_producer_list(char *buffer);
+void generate_subscribed_list(char *buffer, int id);
 void unregister_subscriber(int id, int msg_category);
 int category_exists(int msg_category);
+int client_is_subscriber(int id);
 void notify_clients_about_new_category(int msg_category);
 void distribute_notification(int msg_category, const char *message);
 
@@ -142,6 +152,31 @@ void generate_producer_list(char *buffer) {
     }
 }
 
+// Generowanie listy subskrybcji klienta
+void generate_subscribed_list(char *buffer, int id) {
+    struct subscriber *current = subscriber_list;
+    char temp[MSG_BUFFER_SIZE] = {0};
+    while (current) {
+        if (current->id == id) {
+            snprintf(temp, sizeof(temp), "Kategoria: %d\n", current->msg_category);
+            strncat(buffer, temp, MSG_BUFFER_SIZE - strlen(buffer) - 1);
+        }
+        current = current->next;
+    }
+}
+
+int client_is_subscriber(int id) {
+    struct subscriber *current = subscriber_list;
+    int count = 0;
+    while (current) {
+        if (current->id == id) {
+            count++;
+            break;
+        }
+    }
+    return count;
+}
+
 // Usunięcie subskrybenta
 void unregister_subscriber(int id, int msg_category) {
     struct subscriber **current = &subscriber_list;
@@ -226,7 +261,7 @@ int main(int argc, char *argv[]) {
                 if (producer_list == NULL) {
                     printf("No available notifications for consumer %d.\n", packet.sender_id);
                     response.type = ACTION_NACK;
-                    snprintf(response.body, MSG_BUFFER_SIZE, "No available notifications.");
+                    snprintf(response.body, MSG_BUFFER_SIZE, "No available notifications.\n");
                 } else {
                     memset(response.body, 0, MSG_BUFFER_SIZE);
                     generate_producer_list(response.body);
@@ -237,6 +272,22 @@ int main(int argc, char *argv[]) {
                     perror("Error sending subscription list to client");
                 }
                 break;
+            case ACTION_UNSUBSCRIBE_LIST:
+                printf("Consumer %d requested list of subscribed notifications.\n", packet.sender_id);
+                if (client_is_subscriber(packet.sender_id) == 0) {
+                    printf("Consumer %d doesn't subscribe to any of the notifications.\n", packet.sender_id);
+                    response.type = ACTION_NACK;
+                    snprintf(response.body, MSG_BUFFER_SIZE, "No available notifications to unsubscribe\n");
+                } else {
+                    memset(response.body, 0, MSG_BUFFER_SIZE);
+                    generate_subscribed_list(response.body, packet.sender_id);
+                    response.type = ACTION_UNSUBSCRIBE_LIST;
+                }
+                response.queue_id = packet.queue_id;
+                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+                    printf("Error sending unsubscibtion list to client\n");
+                }
+                break;
 
 
 
@@ -245,17 +296,28 @@ int main(int argc, char *argv[]) {
                 register_subscriber(packet.sender_id, packet.msg_category, packet.queue_id);
                 response.type = ACTION_ACK;
                 if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
-                    perror("Error sending acknowledgment for subscription");
+                    perror("Error sending acknowledgment for subscription\n");
                 }
                 break;
+            case ACTION_UNSUBSCRIBE:
+                printf("Consumer %d unsubscribed category %d\n", packet.sender_id, packet.msg_category);
+                unregister_subscriber(packet.sender_id, packet.msg_category);
+                response.type = ACTION_ACK;
+                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+                    perror("Error sending acknowledgement for unsubscription\n");
+                }
+                break;
+
+
             case ACTION_NOTIFY:
                 printf("Notification received from producer %d for category %d: %s\n",
                     packet.sender_id, packet.msg_category, packet.body);
                 distribute_notification(packet.msg_category, packet.body); // Implementuj funkcję
-                response.type = ACTION_ACK;
-                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
-                    perror("Error sending acknowledgment for notification");
-                }
+                // response.type = ACTION_ACK;
+                // if (msgsnd(dispatcher_queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+                //     perror("Error sending acknowledgment for notification");
+                // } 
+                //Tu też sam do siebie wysyła ACTION_ACK, mimo tego, że printuje w dystrybutorze notification recived, więc to chyba nie potrzebne
                 break;
 
 
@@ -264,10 +326,12 @@ int main(int argc, char *argv[]) {
                 response.type = ACTION_NACK;
         }
 
-        // Wysyłanie odpowiedzi
-        if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
-            perror("Błąd wysyłania odpowiedzi");
-        }
+        // // Wysyłanie odpowiedzi
+        // if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+        //     perror("Błąd wysyłania odpowiedzi");
+        // }
+
+        //Powodowało wysyłanie wiadomości sam do siebie
     }
 
     return 0;

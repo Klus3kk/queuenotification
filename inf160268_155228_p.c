@@ -17,6 +17,7 @@ struct msg_packet {
     char body[MSG_BUFFER_SIZE];
     int sender_id;
     int msg_category;
+    int queue_id;
 };
 
 int main(int argc, char *argv[]) {
@@ -37,13 +38,14 @@ int main(int argc, char *argv[]) {
     }
 
     // Połączenie z kolejką dyspozytora
-    if ((dispatcher_queue_id = msgget(ipc_key, 0666)) == -1) {
+    if ((dispatcher_queue_id = msgget(ipc_key, 0666 | IPC_CREAT)) == -1) {
         perror("Error connecting to dispatcher queue");
         exit(EXIT_FAILURE);
     }
 
     // Rejestracja producenta
     struct msg_packet registration_packet;
+    registration_packet.queue_id = producer_id;
     registration_packet.type = TYPE_PRODUCER;
     registration_packet.sender_id = producer_id;
     registration_packet.msg_category = message_category;
@@ -68,13 +70,14 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    printf("Producer %d registered successfully for category %d.\n", producer_id, message_category);
+    printf("%s id: %d for category: %d.\n", response_packet.body, producer_id, message_category);
 
     // Wysyłanie powiadomień
     struct msg_packet notification_packet;
     notification_packet.type = ACTION_NOTIFY;
     notification_packet.sender_id = producer_id;
     notification_packet.msg_category = message_category;
+    notification_packet.queue_id = producer_id;
 
     while (1) {
         printf("Enter a message to send (or 'exit' to quit): ");
