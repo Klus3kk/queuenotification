@@ -21,7 +21,8 @@ struct msg_packet {
     char body[MSG_BUFFER_SIZE];
     int sender_id;
     int msg_category;
-    int queue_id;
+    int notification_queue_id;
+    int action_queue_id;
 };
 
 struct producer {
@@ -30,16 +31,10 @@ struct producer {
     struct producer *next;
 };
 
-struct subscribtion {
-    int producer_id;
-    int msg_category;
-    struct subscribtion *next;
-};
-
 struct subscriber {
     int id;
     int msg_category;
-    int queue_id;
+    int notification_queue_id;
     struct subscriber *next;
 };
 
@@ -49,7 +44,7 @@ struct subscriber *subscriber_list = NULL;
 
 // Funkcje pomocnicze
 void register_producer(int id, int msg_category);
-void register_subscriber(int id, int msg_category, int queue_id);
+void register_subscriber(int id, int msg_category, int notification_queue_id);
 void generate_producer_list(char *buffer);
 void generate_subscribed_list(char *buffer, int id);
 void unregister_subscriber(int id, int msg_category);
@@ -73,7 +68,7 @@ void register_producer(int id, int msg_category) {
 }
 
 // Dodanie subskrybenta
-void register_subscriber(int id, int msg_category, int queue_id) {
+void register_subscriber(int id, int msg_category, int notification_queue_id) {
     struct subscriber *new_sub = (struct subscriber *)malloc(sizeof(struct subscriber));
     if (!new_sub) {
         perror("Błąd alokacji pamięci dla subskrybenta");
@@ -81,10 +76,10 @@ void register_subscriber(int id, int msg_category, int queue_id) {
     }
     new_sub->id = id;
     new_sub->msg_category = msg_category;
-    new_sub->queue_id = queue_id;
+    new_sub->notification_queue_id = notification_queue_id;
     new_sub->next = subscriber_list;
     subscriber_list = new_sub;
-    printf("Dodano subskrybenta: ID %d, kategoria %d, kolejka %d\n", id, msg_category, queue_id);
+    printf("Dodano subskrybenta: ID %d, kategoria %d, kolejka %d\n", id, msg_category, notification_queue_id);
 }
 
 // Sprawdzenie, czy istnieje kategoria
@@ -109,7 +104,7 @@ void notify_clients_about_new_category(int msg_category) {
         notification.sender_id = 0;  // Dyspozytor jako nadawca
         notification.msg_category = msg_category;
 
-        if (msgsnd(current->queue_id, &notification, sizeof(notification) - sizeof(long), 0) == -1) {
+        if (msgsnd(current->notification_queue_id, &notification, sizeof(notification) - sizeof(long), 0) == -1) {
             perror("Błąd wysyłania powiadomienia o nowej kategorii");
         } else {
             printf("Powiadomiono subskrybenta %d o nowej kategorii %d\n", current->id, msg_category);
@@ -129,7 +124,7 @@ void distribute_notification(int msg_category, const char *message) {
             notification.sender_id = 0;  // Dyspozytor jako nadawca
             notification.msg_category = msg_category;
 
-            if (msgsnd(current->queue_id, &notification, sizeof(notification) - sizeof(long), 0) == -1) {
+            if (msgsnd(current->notification_queue_id, &notification, sizeof(notification) - sizeof(long), 0) == -1) {
                 perror("Błąd wysyłania powiadomienia do subskrybenta");
             } else {
                 printf("Wysłano powiadomienie do subskrybenta %d dla kategorii %d\n", current->id, msg_category);
@@ -221,12 +216,13 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
-        printf("Odebrano wiadomość: type=%ld, sender_id=%d, category=%d, queue_id=%d\n",
-               packet.type, packet.sender_id, packet.msg_category, packet.queue_id);
+        printf("Odebrano wiadomość: type=%ld, sender_id=%d, category=%d, notification_queue_id=%d\n",
+               packet.type, packet.sender_id, packet.msg_category, packet.notification_queue_id);
 
         struct msg_packet response;
         response.sender_id = 0; // Dyspozytor jako nadawca
-        response.queue_id = packet.queue_id; // Kolejka odbiorcy
+        response.notification_queue_id = packet.notification_queue_id; // Kolejka na powiadomeinia
+        response.action_queue_id = packet.action_queue_id; //Kolejka na akcje
 
         switch (packet.type) {
             case TYPE_PRODUCER:
@@ -250,7 +246,6 @@ int main(int argc, char *argv[]) {
 
 
 
-
             case TYPE_CONSUMER:
                 printf("Zarejestrowano konsumenta: ID %d\n", packet.sender_id);
                 response.type = ACTION_ACK;
@@ -267,8 +262,7 @@ int main(int argc, char *argv[]) {
                     generate_producer_list(response.body);
                     response.type = ACTION_SUBSCRIBE_LIST;
                 }
-                response.queue_id = packet.queue_id; // Ustawienie queue_id
-                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+                if (msgsnd(packet.action_queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
                     perror("Error sending subscription list to client");
                 }
                 break;
@@ -283,8 +277,7 @@ int main(int argc, char *argv[]) {
                     generate_subscribed_list(response.body, packet.sender_id);
                     response.type = ACTION_UNSUBSCRIBE_LIST;
                 }
-                response.queue_id = packet.queue_id;
-                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+                if (msgsnd(packet.action_queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
                     printf("Error sending unsubscibtion list to client\n");
                 }
                 break;
@@ -293,9 +286,9 @@ int main(int argc, char *argv[]) {
 
             case ACTION_SUBSCRIBE:
                 printf("Consumer %d subscribed to category %d\n", packet.sender_id, packet.msg_category);
-                register_subscriber(packet.sender_id, packet.msg_category, packet.queue_id);
+                register_subscriber(packet.sender_id, packet.msg_category, packet.notification_queue_id);
                 response.type = ACTION_ACK;
-                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+                if (msgsnd(packet.action_queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
                     perror("Error sending acknowledgment for subscription\n");
                 }
                 break;
@@ -303,7 +296,7 @@ int main(int argc, char *argv[]) {
                 printf("Consumer %d unsubscribed category %d\n", packet.sender_id, packet.msg_category);
                 unregister_subscriber(packet.sender_id, packet.msg_category);
                 response.type = ACTION_ACK;
-                if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
+                if (msgsnd(packet.action_queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
                     perror("Error sending acknowledgement for unsubscription\n");
                 }
                 break;
@@ -313,11 +306,6 @@ int main(int argc, char *argv[]) {
                 printf("Notification received from producer %d for category %d: %s\n",
                     packet.sender_id, packet.msg_category, packet.body);
                 distribute_notification(packet.msg_category, packet.body); // Implementuj funkcję
-                // response.type = ACTION_ACK;
-                // if (msgsnd(dispatcher_queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
-                //     perror("Error sending acknowledgment for notification");
-                // } 
-                //Tu też sam do siebie wysyła ACTION_ACK, mimo tego, że printuje w dystrybutorze notification recived, więc to chyba nie potrzebne
                 break;
 
 
@@ -326,12 +314,6 @@ int main(int argc, char *argv[]) {
                 response.type = ACTION_NACK;
         }
 
-        // // Wysyłanie odpowiedzi
-        // if (msgsnd(packet.queue_id, &response, sizeof(response) - sizeof(long), 0) == -1) {
-        //     perror("Błąd wysyłania odpowiedzi");
-        // }
-
-        //Powodowało wysyłanie wiadomości sam do siebie
     }
 
     return 0;

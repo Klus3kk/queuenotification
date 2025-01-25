@@ -17,7 +17,8 @@ struct msg_packet {
     char body[MSG_BUFFER_SIZE];
     int sender_id;
     int msg_category;
-    int queue_id;
+    int notification_queue_idtion_queue_id;
+    int action_queue_id;
 };
 
 int main(int argc, char *argv[]) {
@@ -45,10 +46,11 @@ int main(int argc, char *argv[]) {
 
     // Rejestracja producenta
     struct msg_packet registration_packet;
-    registration_packet.queue_id = producer_id;
+    registration_packet.notification_queue_idtion_queue_id = producer_id;
     registration_packet.type = TYPE_PRODUCER;
     registration_packet.sender_id = producer_id;
     registration_packet.msg_category = message_category;
+    registration_packet.action_queue_id = producer_id;
 
     if (msgsnd(dispatcher_queue_id, &registration_packet, sizeof(registration_packet) - sizeof(long), 0) == -1) {
         perror("Error sending registration packet");
@@ -77,7 +79,8 @@ int main(int argc, char *argv[]) {
     notification_packet.type = ACTION_NOTIFY;
     notification_packet.sender_id = producer_id;
     notification_packet.msg_category = message_category;
-    notification_packet.queue_id = producer_id;
+    notification_packet.notification_queue_idtion_queue_id = producer_id;
+    notification_packet.action_queue_id = producer_id;
 
     while (1) {
         printf("Enter a message to send (or 'exit' to quit): ");

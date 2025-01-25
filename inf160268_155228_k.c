@@ -22,8 +22,125 @@ struct msg_packet {
     char body[MSG_BUFFER_SIZE];
     int sender_id;
     int msg_category;
-    int queue_id; // ID kolejki odbiorcy
+    int notification_queue_id; // ID kolejki na powiadomienia
+    int action_queue_id; // ID kolejki na akcje klienta
 };
+
+void request_notification_list(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet request_packet, struct msg_packet response_packet);
+void subscribe(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet subscribe_packet, struct msg_packet response_packet);
+void request_subscribed_notifications_list(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet request_packet, struct msg_packet response_packet);
+void unsubscribe(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet subscribe_packet, struct msg_packet response_packet);
+
+void request_notification_list(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet request_packet, struct msg_packet response_packet){
+    request_packet.type = ACTION_SUBSCRIBE_LIST;
+    if (msgsnd(dispatcher_queue_id, &request_packet, sizeof(request_packet) - sizeof(long), 0) == -1) {
+        perror("Error requesting subscription list");
+        exit(EXIT_FAILURE);
+    }
+
+    // Odbieranie listy powiadomień
+    if (msgrcv(client_action_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
+        perror("Error receiving subscription list");
+        exit(EXIT_FAILURE);
+    }
+
+    if (response_packet.type == ACTION_NACK) {
+        fprintf(stderr, "Dyspozytor zwrócił komunikat: %s\n", response_packet.body);
+        exit(EXIT_FAILURE);
+    } else if (response_packet.type != ACTION_SUBSCRIBE_LIST) {
+        fprintf(stderr, "Unexpected response type: %ld\n", response_packet.type);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Available notifications:\n%s", response_packet.body);
+}
+
+void request_subscribed_notifications_list(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet request_packet, struct msg_packet response_packet){
+    request_packet.type = ACTION_UNSUBSCRIBE_LIST;
+    if (msgsnd(dispatcher_queue_id, &request_packet, sizeof(request_packet) - sizeof(long), 0) == -1) {
+        perror("Error requesting unsubscription list");
+        exit(EXIT_FAILURE);
+    }
+    if (msgrcv(client_action_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
+        perror("Error receiving subscription list");
+        exit(EXIT_FAILURE);
+    }
+
+    if (response_packet.type == ACTION_NACK) {
+        fprintf(stderr, "Dyspozytor zwrócił komunikat: %s\n", response_packet.body);
+        exit(EXIT_FAILURE);
+    } else if (response_packet.type != ACTION_UNSUBSCRIBE_LIST) {
+        fprintf(stderr, "Unexpected response type in unsubscribe list action: %ld\n", response_packet.type);
+        exit(EXIT_FAILURE);
+    }
+    printf("Subscribed categories:\n%s", response_packet.body);
+}
+
+void subscribe(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet subscribe_packet, struct msg_packet response_packet){
+    subscribe_packet.type = ACTION_SUBSCRIBE;
+    printf("Enter category to subscribe to: ");
+    int category;
+    if (scanf("%d", &category) != 1) {
+        fprintf(stderr, "Invalid input. Exiting.\n");
+        exit(EXIT_FAILURE);
+    }
+    subscribe_packet.msg_category = category;
+    if (msgsnd(dispatcher_queue_id, &subscribe_packet, sizeof(subscribe_packet) - sizeof(long), 0) == -1) {
+        perror("Error sending subscription request");
+        exit(EXIT_FAILURE);
+    }
+
+    // Oczekiwanie na potwierdzenie subskrypcji
+    if (msgrcv(client_action_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
+        perror("Error receiving subscription acknowledgment");
+        exit(EXIT_FAILURE);
+    }
+
+    if (response_packet.type == ACTION_NACK) {
+        fprintf(stderr, "Subscription request rejected by dispatcher. Exiting.\n");
+        exit(EXIT_FAILURE);
+    } else if (response_packet.type != ACTION_ACK) {
+        fprintf(stderr, "Unexpected response type: %ld\n", response_packet.type);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Subscribed to category %d. Waiting for notifications...\n", category);
+    printf("Type subscribe, if you want to get another notification types(or unsubscribe to resign from subscribtion)\n");
+}
+
+void unsubscribe(int dispatcher_queue_id, int client_action_queue_id, struct msg_packet subscribe_packet, struct msg_packet response_packet){
+    subscribe_packet.type = ACTION_UNSUBSCRIBE;
+    printf("Enter category to unsubscribe: ");
+    int category;
+    if (scanf("%d", &category) != 1) {
+        fprintf(stderr, "Invalid input. Exiting.\n");
+        exit(EXIT_FAILURE);
+    }
+    subscribe_packet.msg_category = category;
+
+    if (msgsnd(dispatcher_queue_id, &subscribe_packet, sizeof(subscribe_packet) - sizeof(long), 0) == -1) {
+        perror("Error sending unsubscription request");
+        exit(EXIT_FAILURE);
+    }
+
+    // Oczekiwanie na potwierdzenie anulowania subskrypcji
+    if (msgrcv(client_action_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
+        perror("Error receiving unsubscription acknowledgment");
+        exit(EXIT_FAILURE);
+    }
+
+    if (response_packet.type == ACTION_NACK) {
+        fprintf(stderr, "Unubscription request rejected by dispatcher. Exiting.\n");
+        exit(EXIT_FAILURE);
+    } else if (response_packet.type != ACTION_ACK) {
+        fprintf(stderr, "Unexpected response type in unsubscribe action: %ld\n", response_packet.type);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Unubscribed to category %d.\n", category);
+    printf("Type subscribe, if you want to get another notification types(or unsubscribe to resign from subscribtion)\n");
+}
+
 
 int main(int argc, char *argv[]) {
     if (argc < 3) {
@@ -32,7 +149,7 @@ int main(int argc, char *argv[]) {
     }
 
     key_t ipc_key, client_notification_key, client_action_key;
-    int dispatcher_queue_id, client_notification_queue_id, client_action_queue_id;
+    int dispatcher_queue_id, client_queue_id, client_action_queue_id;
     int client_id = atoi(argv[2]);
 
     // Generowanie kluczy IPC
@@ -58,7 +175,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Tworzenie kolejki klienta
-    if ((client_notification_queue_id = msgget(client_notification_key, 0666 | IPC_CREAT)) == -1) {
+    if ((client_queue_id = msgget(client_notification_key, 0666 | IPC_CREAT)) == -1) {
         perror("Error creating client notifications queue");
         exit(EXIT_FAILURE);
     }
@@ -72,7 +189,8 @@ int main(int argc, char *argv[]) {
     registration_packet.type = TYPE_CONSUMER;
     registration_packet.sender_id = client_id;
     registration_packet.msg_category = 0;
-    registration_packet.queue_id = client_action_queue_id;
+    registration_packet.notification_queue_id = client_queue_id;
+    registration_packet.action_queue_id = client_action_queue_id;
 
     if (msgsnd(dispatcher_queue_id, &registration_packet, sizeof(registration_packet) - sizeof(long), 0) == -1) {
         perror("Error registering client");
@@ -83,75 +201,30 @@ int main(int argc, char *argv[]) {
 
     // Żądanie listy powiadomień
     struct msg_packet request_packet;
-    request_packet.type = ACTION_SUBSCRIBE_LIST;
     request_packet.sender_id = client_id;
-    request_packet.queue_id = client_action_queue_id;
+    request_packet.notification_queue_id = client_queue_id;
+    request_packet.action_queue_id = client_action_queue_id;
 
-    if (msgsnd(dispatcher_queue_id, &request_packet, sizeof(request_packet) - sizeof(long), 0) == -1) {
-        perror("Error requesting subscription list");
-        exit(EXIT_FAILURE);
-    }
-
-    // Odbieranie listy powiadomień
     struct msg_packet response_packet;
-    if (msgrcv(client_action_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
-        perror("Error receiving subscription list");
-        exit(EXIT_FAILURE);
-    }
 
-    if (response_packet.type == ACTION_NACK) {
-        fprintf(stderr, "Dyspozytor zwrócił komunikat: %s\n", response_packet.body);
-        exit(EXIT_FAILURE);
-    } else if (response_packet.type != ACTION_SUBSCRIBE_LIST) {
-        fprintf(stderr, "Unexpected response type: %ld\n", response_packet.type);
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Available notifications:\n%s", response_packet.body);
+    request_notification_list(dispatcher_queue_id, client_action_queue_id, request_packet, response_packet);
 
     // Subskrybowanie kategorii
-    printf("Enter category to subscribe to: ");
-    int category;
-    if (scanf("%d", &category) != 1) {
-        fprintf(stderr, "Invalid input. Exiting.\n");
-        exit(EXIT_FAILURE);
-    }
-
     struct msg_packet subscribe_packet;
-    subscribe_packet.type = ACTION_SUBSCRIBE;
     subscribe_packet.sender_id = client_id;
-    subscribe_packet.msg_category = category;
-    subscribe_packet.queue_id = client_notification_queue_id;
+    subscribe_packet.notification_queue_id = client_queue_id;
+    subscribe_packet.action_queue_id = client_action_queue_id;
 
-    if (msgsnd(dispatcher_queue_id, &subscribe_packet, sizeof(subscribe_packet) - sizeof(long), 0) == -1) {
-        perror("Error sending subscription request");
-        exit(EXIT_FAILURE);
-    }
+    subscribe(dispatcher_queue_id, client_action_queue_id, subscribe_packet, response_packet);
 
-    // Oczekiwanie na potwierdzenie subskrypcji
-    if (msgrcv(client_notification_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
-        perror("Error receiving subscription acknowledgment");
-        exit(EXIT_FAILURE);
-    }
-
-    if (response_packet.type == ACTION_NACK) {
-        fprintf(stderr, "Subscription request rejected by dispatcher. Exiting.\n");
-        exit(EXIT_FAILURE);
-    } else if (response_packet.type != ACTION_ACK) {
-        fprintf(stderr, "Unexpected response type: %ld\n", response_packet.type);
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Subscribed to category %d. Waiting for notifications...\n", category);
-    printf("Type unsubscribe, if you want to resign from subscribtion\n");
 
     if (fork() == 0) { 
         // Oczekiwanie na powiadomienia
         while (1) {
             struct msg_packet notification_packet;
-            if (msgrcv(client_notification_queue_id, &notification_packet, sizeof(notification_packet) - sizeof(long), 0, 0) == -1) {
-                if (errno == EIDRM) {
-                     printf("Client queue has been removed. Exiting.\n");
+            if (msgrcv(client_queue_id, &notification_packet, sizeof(notification_packet) - sizeof(long), 0, 0) == -1) {
+                 if (errno == EIDRM) {
+                    printf("Client queue has been removed. Exiting.\n");
                     break;
                 }
                 perror("Error receiving notification");
@@ -160,7 +233,7 @@ int main(int argc, char *argv[]) {
 
             if (notification_packet.type == ACTION_NOTIFY) {
                 printf("Notification received: %s\n", notification_packet.body);
-                printf("Type unsubscribe, if you want to resign from subscribtion\n");
+                printf("Type subscribe, if you want to get another notification types(or unsubscribe to resign from subscribtion)\n");
             }
         }
     } else {
@@ -171,65 +244,18 @@ int main(int argc, char *argv[]) {
                 perror("Error reading input");
                 continue;
             }
-
             user_input[strcspn(user_input, "\n")] = '\0';
-
             if (strcmp(user_input, "unsubscribe") == 0) {
-                printf("Subscribed categories:\n");
-                request_packet.type = ACTION_UNSUBSCRIBE_LIST;
-
-                if (msgsnd(dispatcher_queue_id, &request_packet, sizeof(request_packet) - sizeof(long), 0) == -1) {
-                    perror("Error requesting unsubscription list");
-                    exit(EXIT_FAILURE);
-                }
-                if (msgrcv(client_action_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
-                    perror("Error receiving subscription list");
-                    exit(EXIT_FAILURE);
-                }
-
-                if (response_packet.type == ACTION_NACK) {
-                    fprintf(stderr, "Dyspozytor zwrócił komunikat: %s\n", response_packet.body);
-                    exit(EXIT_FAILURE);
-                } else if (response_packet.type != ACTION_UNSUBSCRIBE_LIST) {
-                    fprintf(stderr, "Unexpected response type: %ld\n", response_packet.type);
-                    exit(EXIT_FAILURE);
-                }
-                printf("%s", response_packet.body);
+                request_subscribed_notifications_list(dispatcher_queue_id, client_action_queue_id, request_packet, response_packet);
+                unsubscribe(dispatcher_queue_id, client_action_queue_id, subscribe_packet, response_packet);
+            } else if (strcmp(user_input, "subscribe") == 0) {
+                request_notification_list(dispatcher_queue_id, client_action_queue_id, request_packet, response_packet);
+                subscribe(dispatcher_queue_id, client_action_queue_id, subscribe_packet, response_packet);
             } else {
                 continue;
             }
 
-            printf("Enter category to unsubscribe: ");
-            int category;
-            if (scanf("%d", &category) != 1) {
-                fprintf(stderr, "Invalid input. Exiting.\n");
-                exit(EXIT_FAILURE);
-            }
-
-            subscribe_packet.type = ACTION_UNSUBSCRIBE;
-            subscribe_packet.msg_category = category;
-            subscribe_packet.queue_id = client_action_queue_id;
-
-            if (msgsnd(dispatcher_queue_id, &subscribe_packet, sizeof(subscribe_packet) - sizeof(long), 0) == -1) {
-                perror("Error sending unsubscription request");
-                exit(EXIT_FAILURE);
-            }
-
-            // Oczekiwanie na potwierdzenie anulowania subskrypcji
-            if (msgrcv(client_action_queue_id, &response_packet, sizeof(response_packet) - sizeof(long), 0, 0) == -1) {
-                perror("Error receiving unsubscription acknowledgment");
-                exit(EXIT_FAILURE);
-            }
-
-            if (response_packet.type == ACTION_NACK) {
-                fprintf(stderr, "Unubscription request rejected by dispatcher. Exiting.\n");
-                exit(EXIT_FAILURE);
-            } else if (response_packet.type != ACTION_ACK) {
-                fprintf(stderr, "Unexpected response type: %ld\n", response_packet.type);
-                exit(EXIT_FAILURE);
-            }
-
-            printf("Unubscribed to category %d.\n", category);
+           
         }
     }
 
